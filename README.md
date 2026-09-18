@@ -155,11 +155,11 @@ contract). Then update the three `_ADDRESS` constants near the top of
 
 **Live on GenLayer Studio (studionet):**
 
-```
-PolicyRegistry:  0xff341cd2B736869814ae8591c0A6183230F74A34
-DeliveryOracle:  0xbA76bFD84b29260F1E0583074B92F249f4CBC561
-SettlementVault: 0x3b01D37F85032a8988cE5Cd84990fE713CE92454
-```
+| Contract | Address | Explorer |
+|---|---|---|
+| PolicyRegistry | `0xff341cd2B736869814ae8591c0A6183230F74A34` | [view](https://explorer-studio.genlayer.com/address/0xff341cd2B736869814ae8591c0A6183230F74A34) |
+| DeliveryOracle | `0xbA76bFD84b29260F1E0583074B92F249f4CBC561` | [view](https://explorer-studio.genlayer.com/address/0xbA76bFD84b29260F1E0583074B92F249f4CBC561) |
+| SettlementVault | `0x3b01D37F85032a8988cE5Cd84990fE713CE92454` | [view](https://explorer-studio.genlayer.com/address/0x3b01D37F85032a8988cE5Cd84990fE713CE92454) |
 
 ## Policy lifecycle
 
