@@ -38,7 +38,7 @@ def test_request_resolution_before_evidence_lock_time_reverts(rig):
         rig["oracle"].request_resolution(rig["policy_id"])
 
 
-def test_two_sources_agree_delayed_and_forwards_escrow_to_vault(rig, monkeypatch):
+def test_two_sources_agree_delayed_and_defers_escrow_forwarding(rig, monkeypatch):
     registry, oracle, vault = rig["registry"], rig["oracle"], rig["vault"]
     unlock = now_utc() + datetime.timedelta(days=15)
     _freeze(monkeypatch, registry, oracle, unlock)
@@ -50,13 +50,25 @@ def test_two_sources_agree_delayed_and_forwards_escrow_to_vault(rig, monkeypatch
     assert resolution["decision"] == "DELAYED"
     assert resolution["is_final"] is False
 
+    # request_resolution itself never calls the registry when it ran a
+    # nondet evaluation (see the module docstring for why) - the policy
+    # stays ACTIVE and the escrow stays in the registry until
+    # finalize_resolution actually finalizes the resolution.
     policy = json.loads(registry.get_policy_json(rig["policy_id"]))
-    assert policy["state"] == "RESOLVING"
+    assert policy["state"] == "ACTIVE"
 
     from genlayer import Ledger
 
     total = rig["kwargs"]["premium_amount"] + rig["kwargs"]["coverage_amount"]
-    assert Ledger.balance_of("0x" + "03" * 20) == total  # VAULT_ADDRESS
+    assert Ledger.balance_of("0x" + "01" * 20) == total  # still with the registry
+
+    past_window = unlock + datetime.timedelta(hours=49)
+    _freeze(monkeypatch, registry, oracle, past_window)
+    oracle.finalize_resolution(rig["policy_id"])
+
+    policy = json.loads(registry.get_policy_json(rig["policy_id"]))
+    assert policy["state"] == "RESOLVING"
+    assert Ledger.balance_of("0x" + "03" * 20) == total  # now with the vault
 
 
 def test_single_source_agreement_is_inconclusive(rig, monkeypatch):
