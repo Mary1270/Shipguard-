@@ -315,19 +315,27 @@ async function callWrite(out, address, functionName, args, value = 0n) {
   // A transaction can be FINALIZED by consensus while its contract
   // execution itself failed (e.g. a raised gl.vm.UserError) - found via
   // live testing, where a call that should have reverted showed "Done."
-  // instead, because this check was missing. Consensus finalizing just
-  // means validators agreed on the outcome, not that the outcome was
-  // success. genlayer-js names this field txExecutionResultName, with a
-  // documented failure value of 'FINISHED_WITH_ERROR'. Checked here as a
-  // case-insensitive substring match on "error" - looser than an exact
-  // string compare - so a naming drift in a future SDK version can only
-  // ever miss a real failure (same as before this fix existed), never
-  // wrongly flag a genuinely successful call as failed.
-  if (receipt.txExecutionResultName && /error/i.test(receipt.txExecutionResultName)) {
+  // instead. Pulling the actual failed transaction's raw JSON from
+  // GenLayer's own block explorer confirmed the real field:
+  // consensus_data.leader_receipt[0].execution_result is the literal
+  // string "ERROR" on failure (and, by the same evidence, "SUCCESS" on
+  // success) - the same object level extractReturnValue already reads
+  // `.result.payload.readable` from below, so this reads the sibling
+  // field the same way. A whole-receipt "rollback"/error-JSON substring
+  // scan is kept as a second, independent check in case the field is
+  // ever absent or renamed - either check tripping is treated as failure.
+  const leaderReceipt = receipt?.consensus_data?.leader_receipt?.[0];
+  const executionResult = leaderReceipt?.execution_result ?? leaderReceipt?.executionResult;
+  let receiptText = '';
+  try { receiptText = JSON.stringify(receipt); } catch (e) { /* ignore */ }
+  const looksLikeFailure =
+    (executionResult && String(executionResult).toUpperCase() !== 'SUCCESS') ||
+    (!executionResult && (/rollback/i.test(receiptText) || /"[a-z_]*execution[a-z_]*"\s*:\s*"error"/i.test(receiptText)));
+  if (looksLikeFailure) {
     const detail = extractReturnValue(receipt);
     throw new Error(
-      `Contract execution failed (${receipt.txExecutionResultName}).` +
-      (detail ? ` ${typeof detail === 'string' ? detail : JSON.stringify(detail)}` : ' See the transaction on the block explorer for details.')
+      `Contract execution failed${executionResult ? ` (${executionResult})` : ''}.` +
+      (detail ? ` ${typeof detail === 'string' ? detail : JSON.stringify(detail)}` : ` See the transaction: ${txHash}`)
     );
   }
 

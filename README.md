@@ -221,16 +221,19 @@ bugs were only caught this way:
    now does the registry call, since it never runs a nondet block itself).
 4. **A transaction can be FINALIZED by consensus while its contract
    execution failed.** `index.html` originally reported "Done." for any
-   call whose promise resolved, with no separate check - found live: a
-   `request_resolution` call that should have reverted (a resolution
-   already existed for that policy) instead showed success in the UI,
-   because consensus finalizing a transaction only means validators
-   agreed on the outcome, not that the outcome was success. Fixed by
-   checking `receipt.txExecutionResultName` for an "error" substring
-   (case-insensitive) before reporting success - looser than an exact
-   match against genlayer-js's documented `FINISHED_WITH_ERROR` value, so
-   a future naming change can only ever miss a real failure, never
-   mistake a genuine success for one.
+   call whose promise resolved. Found live twice: a `request_resolution`
+   call that should have reverted (a resolution already existed for that
+   policy) showed success in the UI both before and after a first attempted
+   fix, because that fix guessed a field name that didn't match. Pulling
+   the actual failed transaction's **raw JSON** from GenLayer's own block
+   explorer confirmed the real field:
+   `consensus_data.leader_receipt[0].execution_result` is the literal
+   string `"ERROR"` on failure (`"SUCCESS"` on success) - the same object
+   level `extractReturnValue` already reads `.result.payload.readable`
+   from. The final fix checks that exact field, with a whole-receipt
+   substring scan kept as a second, independent fallback, and was
+   verified against the real failure's exact JSON shape before being
+   committed.
 
 Confirmed working live, with real GEN, on GenLayer Studio: `gl.message.value`
 correctly read and validated inside a `@gl.public.write.payable` method
