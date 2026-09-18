@@ -311,6 +311,26 @@ async function callWrite(out, address, functionName, args, value = 0n) {
   const receipt = await client.waitForTransactionReceipt({
     hash: txHash, status: 'FINALIZED', interval: 4000, retries: 30,
   });
+
+  // A transaction can be FINALIZED by consensus while its contract
+  // execution itself failed (e.g. a raised gl.vm.UserError) - found via
+  // live testing, where a call that should have reverted showed "Done."
+  // instead, because this check was missing. Consensus finalizing just
+  // means validators agreed on the outcome, not that the outcome was
+  // success. genlayer-js names this field txExecutionResultName, with a
+  // documented failure value of 'FINISHED_WITH_ERROR'. Checked here as a
+  // case-insensitive substring match on "error" - looser than an exact
+  // string compare - so a naming drift in a future SDK version can only
+  // ever miss a real failure (same as before this fix existed), never
+  // wrongly flag a genuinely successful call as failed.
+  if (receipt.txExecutionResultName && /error/i.test(receipt.txExecutionResultName)) {
+    const detail = extractReturnValue(receipt);
+    throw new Error(
+      `Contract execution failed (${receipt.txExecutionResultName}).` +
+      (detail ? ` ${typeof detail === 'string' ? detail : JSON.stringify(detail)}` : ' See the transaction on the block explorer for details.')
+    );
+  }
+
   const result = extractReturnValue(receipt);
   showOut(out, `Done.\n\nTx: ${txHash}\n\n${result !== null ? JSON.stringify(result, null, 2) : 'See explorer.'}`, 'ok');
   return result;

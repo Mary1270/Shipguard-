@@ -219,6 +219,18 @@ bugs were only caught this way:
    `finalize_task` for exactly this reason) led to splitting
    `request_resolution` (nondet only) from `finalize_resolution` (which
    now does the registry call, since it never runs a nondet block itself).
+4. **A transaction can be FINALIZED by consensus while its contract
+   execution failed.** `index.html` originally reported "Done." for any
+   call whose promise resolved, with no separate check - found live: a
+   `request_resolution` call that should have reverted (a resolution
+   already existed for that policy) instead showed success in the UI,
+   because consensus finalizing a transaction only means validators
+   agreed on the outcome, not that the outcome was success. Fixed by
+   checking `receipt.txExecutionResultName` for an "error" substring
+   (case-insensitive) before reporting success - looser than an exact
+   match against genlayer-js's documented `FINISHED_WITH_ERROR` value, so
+   a future naming change can only ever miss a real failure, never
+   mistake a genuine success for one.
 
 Confirmed working live, with real GEN, on GenLayer Studio: `gl.message.value`
 correctly read and validated inside a `@gl.public.write.payable` method
