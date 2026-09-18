@@ -1,0 +1,415 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>ShipGuard — Parametric Shipping-Delay Insurance</title>
+<style>
+  :root { color-scheme: dark; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  body { margin: 0; background: #0f172a; color: #e2e8f0; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { margin: 0 0 4px; }
+  .sub { color: #94a3b8; margin: 0 0 20px; }
+  .addrs { font-family: monospace; font-size: 0.8rem; color: #94a3b8; margin-bottom: 20px; line-height: 1.6; }
+  .card { background: #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+  .card h2 { margin-top: 0; font-size: 1.05rem; }
+  label { display: block; margin-bottom: 12px; font-size: 0.9rem; }
+  input, textarea, select { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px;
+    border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-family: inherit; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  button { background: #38bdf8; color: #0f172a; border: none; padding: 9px 16px; border-radius: 8px;
+    font-weight: 600; cursor: pointer; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: #64748b; }
+  .dot.on { background: #4ade80; }
+  .out { display: none; white-space: pre-wrap; font-family: monospace; font-size: 0.82rem;
+    background: #0f172a; border-radius: 8px; padding: 10px; margin-top: 10px; }
+  .out.ok { border: 1px solid #16a34a; }
+  .out.err { border: 1px solid #dc2626; }
+  small { color: #94a3b8; }
+  .field-list dt { color: #94a3b8; font-size: 0.8rem; }
+  .field-list dd { margin: 0 0 8px; word-break: break-all; }
+  .field-list { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ShipGuard</h1>
+  <p class="sub">Parametric shipping-delay insurance — a reference frontend built with <code>genlayer-js</code>, no build step.</p>
+
+  <div class="addrs">
+    PolicyRegistry: <span id="registryAddrText"></span><br/>
+    DeliveryOracle: <span id="oracleAddrText"></span><br/>
+    SettlementVault: <span id="vaultAddrText"></span>
+  </div>
+
+  <div class="status-row">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">Not connected</span>
+    <button id="connectBtn">connect wallet</button>
+    <button id="testSessionBtn">start test session</button>
+  </div>
+  <small id="testSessionNote" style="display:none">
+    Test session: a throwaway local key, only useful against a network that funds new accounts automatically (e.g. GenLayer Studio). Not for real GEN.
+  </small>
+
+  <!-- 1: Create & fund policy -->
+  <div class="card">
+    <h2>1 — Insure a shipment</h2>
+    <label>Carrier <input id="carrier" placeholder="e.g. Maersk" /></label>
+    <label>Tracking sources (2+ URLs, separated by |)
+      <textarea id="trackingRef" rows="2" placeholder="https://tracker.example.com/A|https://tracker2.example.com/A"></textarea>
+    </label>
+    <div class="grid-2">
+      <label>Declared ETA <input id="declaredEta" type="datetime-local" /></label>
+      <label>Delay threshold (days) <input id="delayThresholdDays" type="number" value="3" min="1" /></label>
+    </div>
+    <div class="grid-2">
+      <label>Premium (GEN) <input id="premiumAmount" type="number" step="0.0001" min="0" /></label>
+      <label>Coverage requested (GEN) <input id="coverageAmount" type="number" step="0.0001" min="0" /></label>
+    </div>
+    <div class="grid-2">
+      <label>Waiting period before coverage starts (days) <input id="waitingPeriodDays" type="number" value="2" min="1" /></label>
+      <label>Evidence buffer after ETA (days) <input id="evidenceBufferDays" type="number" value="2" min="0" /></label>
+    </div>
+    <label>Underwriter funding window (days) <input id="fundingWindowDays" type="number" value="7" min="1" /></label>
+    <button id="createBtn">create policy &amp; pay premium</button>
+    <div class="out" id="createOut"></div>
+  </div>
+
+  <!-- 2: Underwrite / cancel -->
+  <div class="card">
+    <h2>2 — Underwrite a policy</h2>
+    <label>Policy ID <input id="underwriteId" type="number" min="0" /></label>
+    <label>Coverage to lock (GEN, must match the policy's coverage_amount exactly)
+      <input id="underwriteCoverage" type="number" step="0.0001" min="0" />
+    </label>
+    <button id="underwriteBtn">underwrite</button>
+    <div class="out" id="underwriteOut"></div>
+    <hr style="border-color:#334155; margin: 16px 0;" />
+    <label>Policy ID to cancel (only after its funding window has expired unfunded)
+      <input id="cancelId" type="number" min="0" />
+    </label>
+    <button id="cancelBtn">cancel &amp; refund premium</button>
+    <div class="out" id="cancelOut"></div>
+  </div>
+
+  <!-- 3: Resolution lifecycle -->
+  <div class="card">
+    <h2>3 — Resolution</h2>
+    <label>Policy ID <input id="resolveId" type="number" min="0" /></label>
+    <button id="requestResolutionBtn">request resolution</button>
+    <div class="out" id="requestResolutionOut"></div>
+    <hr style="border-color:#334155; margin: 16px 0;" />
+    <label>Extra evidence URL to challenge with <input id="challengeUrl" placeholder="https://..." /></label>
+    <button id="challengeBtn">challenge (insured/underwriter only, once each)</button>
+    <div class="out" id="challengeOut"></div>
+    <hr style="border-color:#334155; margin: 16px 0;" />
+    <button id="finalizeBtn">finalize (after the 48h challenge window)</button>
+    <div class="out" id="finalizeOut"></div>
+  </div>
+
+  <!-- 4: Settle -->
+  <div class="card">
+    <h2>4 — Settle</h2>
+    <label>Policy ID <input id="settleId" type="number" min="0" /></label>
+    <button id="settleBtn">settle &amp; pay out</button>
+    <div class="out" id="settleOut"></div>
+  </div>
+
+  <!-- 5: Read -->
+  <div class="card">
+    <h2>Look up a policy</h2>
+    <label>Policy ID <input id="readId" type="number" min="0" /></label>
+    <button id="readBtn">read</button>
+    <dl class="field-list" id="fieldsList" style="margin-top:12px;"></dl>
+    <div class="out" id="readOut"></div>
+  </div>
+</div>
+
+<script type="module">
+import { createClient, createAccount } from "https://esm.sh/genlayer-js@latest";
+import { studionet } from "https://esm.sh/genlayer-js@latest/chains";
+
+// ------------------------------------------------------------------
+// EDIT THESE if you redeploy the contracts to new addresses.
+// ------------------------------------------------------------------
+const REGISTRY_ADDRESS = "0x0000000000000000000000000000000000000000";
+const ORACLE_ADDRESS   = "0x0000000000000000000000000000000000000000";
+const VAULT_ADDRESS    = "0x0000000000000000000000000000000000000000";
+
+document.getElementById('registryAddrText').textContent = REGISTRY_ADDRESS;
+document.getElementById('oracleAddrText').textContent = ORACLE_ADDRESS;
+document.getElementById('vaultAddrText').textContent = VAULT_ADDRESS;
+
+let client = null;
+let account = null;
+
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
+
+function setStatus(connected, label) {
+  statusDot.classList.toggle('on', connected);
+  statusText.textContent = label;
+}
+
+async function connectWallet() {
+  if (!window.ethereum) {
+    setStatus(false, 'No injected wallet found — install MetaMask, or use "start test session" instead');
+    return;
+  }
+  try {
+    const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+    account = accounts[0];
+    client = createClient({ chain: studionet, account });
+    setStatus(true, `Connected (MetaMask) · ${account.slice(0,6)}…${account.slice(-4)}`);
+    document.getElementById('connectBtn').textContent = 'reconnect';
+    document.getElementById('testSessionNote').style.display = 'none';
+  } catch (err) {
+    setStatus(false, 'Connection rejected');
+  }
+}
+document.getElementById('connectBtn').addEventListener('click', connectWallet);
+
+function startTestSession() {
+  const generated = createAccount();
+  account = generated.address ?? generated;
+  client = createClient({ chain: studionet, account: generated });
+  setStatus(true, `Connected (test session) · ${account.slice(0,6)}…${account.slice(-4)}`);
+  document.getElementById('testSessionBtn').textContent = 'new test session';
+  document.getElementById('testSessionNote').style.display = 'block';
+}
+document.getElementById('testSessionBtn').addEventListener('click', startTestSession);
+
+// Read-only client, usable even without a wallet connection.
+const readClient = createClient({ chain: studionet });
+
+// ------------------------------------------------------------------
+// GEN uses 18 decimals, same convention as ETH/wei. Not yet confirmed
+// against a live Studio deployment - see README.md "Known areas to
+// verify" before relying on this for real amounts.
+// ------------------------------------------------------------------
+function toBaseUnits(genAmount) {
+  const value = Number(genAmount);
+  if (!isFinite(value) || value < 0) throw new Error('invalid GEN amount');
+  return BigInt(Math.round(value * 1e18));
+}
+
+function fromBaseUnits(baseAmount) {
+  return Number(BigInt(baseAmount)) / 1e18;
+}
+
+/** <input type="datetime-local"> (local time) -> ISO-8601 UTC string. */
+function localInputToIsoUtc(localValue) {
+  const d = new Date(localValue);
+  if (isNaN(d.getTime())) return null;
+  return d.toISOString();
+}
+
+function defaultLocalValue(hoursFromNow) {
+  const future = new Date(Date.now() + hoursFromNow * 3600000);
+  const tzOffsetMs = future.getTimezoneOffset() * 60000;
+  const local = new Date(future.getTime() - tzOffsetMs);
+  return local.toISOString().slice(0, 16);
+}
+document.getElementById('declaredEta').value = defaultLocalValue(10 * 24);
+
+function showOut(el, text, kind) {
+  el.style.display = 'block';
+  el.className = 'out' + (kind ? ' ' + kind : '');
+  el.textContent = text; // safe: textContent never interprets markup
+}
+
+function requireClient(out) {
+  if (!client) {
+    showOut(out, 'Connect a wallet first (MetaMask or test session).', 'err');
+    return false;
+  }
+  return true;
+}
+
+/** Same shape MatchGuard's frontend uses to pull a plain value back out
+ * of a finalized transaction receipt. */
+function extractReturnValue(receipt) {
+  const payload = receipt?.consensus_data?.leader_receipt?.[0]?.result?.payload?.readable;
+  if (payload === undefined) return null;
+  let value = payload;
+  for (let i = 0; i < 3; i++) {
+    if (typeof value !== 'string') break;
+    const trimmed = value.trim();
+    const looksLikeJson = trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('"');
+    if (!looksLikeJson) break;
+    try { value = JSON.parse(value); } catch (e) { break; }
+  }
+  return value;
+}
+
+async function callWrite(out, address, functionName, args, value = 0n) {
+  showOut(out, 'Submitting transaction…');
+  const txHash = await client.writeContract({ address, functionName, args, value });
+  showOut(out, `Transaction sent: ${txHash}\nWaiting for finalization…`);
+  const receipt = await client.waitForTransactionReceipt({
+    hash: txHash, status: 'FINALIZED', interval: 4000, retries: 30,
+  });
+  const result = extractReturnValue(receipt);
+  showOut(out, `Done.\n\nTx: ${txHash}\n\n${result !== null ? JSON.stringify(result, null, 2) : 'See explorer.'}`, 'ok');
+  return result;
+}
+
+async function callRead(address, functionName, args) {
+  const raw = await readClient.readContract({ address, functionName, args });
+  return typeof raw === 'string' ? JSON.parse(raw) : raw;
+}
+
+// ---------- 1: Create & fund policy ----------
+document.getElementById('createBtn').addEventListener('click', async () => {
+  const out = document.getElementById('createOut');
+  if (!requireClient(out)) return;
+  try {
+    const carrier = document.getElementById('carrier').value.trim();
+    const trackingRef = document.getElementById('trackingRef').value.trim();
+    const declaredEta = localInputToIsoUtc(document.getElementById('declaredEta').value);
+    const delayThresholdDays = Number(document.getElementById('delayThresholdDays').value);
+    const premiumAmount = toBaseUnits(document.getElementById('premiumAmount').value);
+    const coverageAmount = toBaseUnits(document.getElementById('coverageAmount').value);
+    const waitingPeriodDays = Number(document.getElementById('waitingPeriodDays').value);
+    const evidenceBufferDays = Number(document.getElementById('evidenceBufferDays').value);
+    const fundingWindowDays = Number(document.getElementById('fundingWindowDays').value);
+
+    if (!carrier || !trackingRef || !declaredEta) {
+      showOut(out, 'Fill in carrier, tracking sources, and a valid declared ETA.', 'err');
+      return;
+    }
+
+    await callWrite(out, REGISTRY_ADDRESS, 'create_and_fund_policy', [
+      carrier, trackingRef, declaredEta, delayThresholdDays,
+      premiumAmount, coverageAmount, waitingPeriodDays, evidenceBufferDays, fundingWindowDays,
+    ], premiumAmount);
+  } catch (err) {
+    showOut(out, 'Error: ' + (err?.message || String(err)), 'err');
+  }
+});
+
+// ---------- 2: Underwrite / cancel ----------
+document.getElementById('underwriteBtn').addEventListener('click', async () => {
+  const out = document.getElementById('underwriteOut');
+  if (!requireClient(out)) return;
+  try {
+    const id = document.getElementById('underwriteId').value.trim();
+    const coverage = toBaseUnits(document.getElementById('underwriteCoverage').value);
+    await callWrite(out, REGISTRY_ADDRESS, 'fund_as_underwriter', [id], coverage);
+  } catch (err) {
+    showOut(out, 'Error: ' + (err?.message || String(err)), 'err');
+  }
+});
+
+document.getElementById('cancelBtn').addEventListener('click', async () => {
+  const out = document.getElementById('cancelOut');
+  if (!requireClient(out)) return;
+  try {
+    const id = document.getElementById('cancelId').value.trim();
+    await callWrite(out, REGISTRY_ADDRESS, 'cancel_if_unfunded', [id]);
+  } catch (err) {
+    showOut(out, 'Error: ' + (err?.message || String(err)), 'err');
+  }
+});
+
+// ---------- 3: Resolution lifecycle ----------
+document.getElementById('requestResolutionBtn').addEventListener('click', async () => {
+  const out = document.getElementById('requestResolutionOut');
+  if (!requireClient(out)) return;
+  try {
+    const id = document.getElementById('resolveId').value.trim();
+    await callWrite(out, ORACLE_ADDRESS, 'request_resolution', [id]);
+  } catch (err) {
+    showOut(out, 'Error: ' + (err?.message || String(err)), 'err');
+  }
+});
+
+document.getElementById('challengeBtn').addEventListener('click', async () => {
+  const out = document.getElementById('challengeOut');
+  if (!requireClient(out)) return;
+  try {
+    const id = document.getElementById('resolveId').value.trim();
+    const url = document.getElementById('challengeUrl').value.trim();
+    if (!url) { showOut(out, 'Enter an extra evidence URL.', 'err'); return; }
+    await callWrite(out, ORACLE_ADDRESS, 'challenge_resolution', [id, url]);
+  } catch (err) {
+    showOut(out, 'Error: ' + (err?.message || String(err)), 'err');
+  }
+});
+
+document.getElementById('finalizeBtn').addEventListener('click', async () => {
+  const out = document.getElementById('finalizeOut');
+  if (!requireClient(out)) return;
+  try {
+    const id = document.getElementById('resolveId').value.trim();
+    await callWrite(out, ORACLE_ADDRESS, 'finalize_resolution', [id]);
+  } catch (err) {
+    showOut(out, 'Error: ' + (err?.message || String(err)), 'err');
+  }
+});
+
+// ---------- 4: Settle ----------
+document.getElementById('settleBtn').addEventListener('click', async () => {
+  const out = document.getElementById('settleOut');
+  if (!requireClient(out)) return;
+  try {
+    const id = document.getElementById('settleId').value.trim();
+    await callWrite(out, VAULT_ADDRESS, 'settle', [id]);
+  } catch (err) {
+    showOut(out, 'Error: ' + (err?.message || String(err)), 'err');
+  }
+});
+
+// ---------- 5: Read ----------
+function clearChildren(node) {
+  while (node.firstChild) node.removeChild(node.firstChild);
+}
+
+function addField(dl, label, value) {
+  const dt = document.createElement('dt');
+  dt.textContent = label;
+  const dd = document.createElement('dd');
+  dd.textContent = value;
+  dl.appendChild(dt);
+  dl.appendChild(dd);
+}
+
+document.getElementById('readBtn').addEventListener('click', async () => {
+  const out = document.getElementById('readOut');
+  const fieldsList = document.getElementById('fieldsList');
+  clearChildren(fieldsList);
+  try {
+    const id = document.getElementById('readId').value.trim();
+    showOut(out, 'Reading contract state…');
+    const policy = await callRead(REGISTRY_ADDRESS, 'get_policy_json', [id]);
+
+    addField(fieldsList, 'state', policy.state);
+    addField(fieldsList, 'carrier', policy.carrier);
+    addField(fieldsList, 'insured', policy.insured);
+    addField(fieldsList, 'underwriter', policy.underwriter || '(not yet funded)');
+    addField(fieldsList, 'premium', `${fromBaseUnits(policy.premium_amount)} GEN`);
+    addField(fieldsList, 'coverage', `${fromBaseUnits(policy.coverage_amount)} GEN`);
+    addField(fieldsList, 'declared ETA', policy.declared_eta);
+    addField(fieldsList, 'evidence unlocks', policy.evidence_lock_time);
+    addField(fieldsList, 'final deadline', policy.final_deadline);
+    if (policy.resolution) addField(fieldsList, 'settled as', policy.resolution);
+
+    try {
+      const resolution = await callRead(ORACLE_ADDRESS, 'get_resolution_json', [id]);
+      addField(fieldsList, 'oracle decision', `${resolution.decision} (${resolution.is_final ? 'final' : 'challenge window open'})`);
+      addField(fieldsList, 'evidence summary', resolution.evidence_summary);
+    } catch (e) {
+      // No resolution requested yet - expected for ACTIVE policies.
+    }
+
+    showOut(out, JSON.stringify(policy, null, 2), 'ok');
+  } catch (err) {
+    showOut(out, 'Error: ' + (err?.message || String(err)), 'err');
+  }
+});
+</script>
+</body>
+</html>
