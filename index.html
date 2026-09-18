@@ -75,7 +75,8 @@
 
   hr.divider { border: none; border-top: 1px dashed var(--line); margin: 20px 0; }
 
-  .out { display: none; white-space: pre-wrap; font-family: var(--mono); font-size: 0.8rem;
+  .out { display: none; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word;
+    font-family: var(--mono); font-size: 0.8rem;
     background: #0d1a2b; border-radius: 3px; padding: 12px; margin-top: 12px; border: 1px solid var(--line); }
   .out.ok { border-color: var(--teal); color: var(--ink); }
   .out.err { border-color: var(--rust); color: #f0d9d0; }
