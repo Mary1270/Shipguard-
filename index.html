@@ -5,58 +5,117 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>ShipGuard — Parametric Shipping-Delay Insurance</title>
 <style>
-  :root { color-scheme: dark; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
-  body { margin: 0; background: #0f172a; color: #e2e8f0; }
-  .wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; }
-  h1 { margin: 0 0 4px; }
-  .sub { color: #94a3b8; margin: 0 0 20px; }
-  .addrs { font-family: monospace; font-size: 0.8rem; color: #94a3b8; margin-bottom: 20px; line-height: 1.6; }
-  .card { background: #1e293b; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
-  .card h2 { margin-top: 0; font-size: 1.05rem; }
-  label { display: block; margin-bottom: 12px; font-size: 0.9rem; }
-  input, textarea, select { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 8px;
-    border-radius: 6px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-family: inherit; }
-  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-  button { background: #38bdf8; color: #0f172a; border: none; padding: 9px 16px; border-radius: 8px;
-    font-weight: 600; cursor: pointer; }
-  button:disabled { opacity: 0.5; cursor: not-allowed; }
-  .status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: #64748b; }
-  .dot.on { background: #4ade80; }
-  .out { display: none; white-space: pre-wrap; font-family: monospace; font-size: 0.82rem;
-    background: #0f172a; border-radius: 8px; padding: 10px; margin-top: 10px; }
-  .out.ok { border: 1px solid #16a34a; }
-  .out.err { border: 1px solid #dc2626; }
-  small { color: #94a3b8; }
-  .field-list dt { color: #94a3b8; font-size: 0.8rem; }
-  .field-list dd { margin: 0 0 8px; word-break: break-all; }
-  .field-list { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 0.85rem; }
+  /* ------------------------------------------------------------------
+     ShipGuard reads as a shipping manifest / marine-insurance ledger,
+     not a generic SaaS dashboard: flat hairline-divided entries instead
+     of shadowed rounded cards, a serif hand for headings the way an old
+     policy document would set them, monospace for every address, id,
+     and amount (ledger figures), and a single brass accent reserved for
+     the primary action in each entry.
+     ------------------------------------------------------------------ */
+  :root {
+    color-scheme: dark;
+    --bg: #0a1420;
+    --line: #24344a;
+    --ink: #e7e1d2;
+    --ink-dim: #8b94a6;
+    --brass: #c49a5a;
+    --brass-dim: #6b5a3c;
+    --teal: #5fada6;
+    --rust: #c06a52;
+    --serif: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-family: var(--sans);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); }
+  ::selection { background: var(--brass-dim); color: var(--ink); }
+
+  .wrap { max-width: 760px; margin: 0 auto; padding: 40px 20px 80px; }
+
+  header.masthead { border-bottom: 1px solid var(--line); padding-bottom: 20px; margin-bottom: 28px; }
+  h1 { font-family: var(--serif); font-weight: 400; font-size: 2.1rem; letter-spacing: 0.01em;
+    margin: 0 0 6px; }
+  .sub { color: var(--ink-dim); margin: 0 0 18px; max-width: 56ch; line-height: 1.5; }
+
+  .addrs { font-family: var(--mono); font-size: 0.78rem; color: var(--ink-dim); line-height: 1.9; }
+  .addrs .label { color: var(--ink-dim); display: inline-block; width: 128px; }
+  .addrs span[id] { color: var(--ink); }
+
+  .status-row { display: flex; align-items: center; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-dim); flex: none; }
+  .dot.on { background: var(--teal); }
+  #statusText { font-size: 0.85rem; color: var(--ink-dim); margin-right: 4px; }
+  small { color: var(--ink-dim); display: block; margin-top: 10px; font-size: 0.8rem; line-height: 1.5; }
+
+  /* Ledger entries: hairline-separated, not boxed cards */
+  .card { border-top: 1px solid var(--line); padding: 26px 0; }
+  .card:last-of-type { border-bottom: 1px solid var(--line); }
+  .card h2 { font-family: var(--serif); font-weight: 400; font-size: 1.2rem; margin: 0 0 16px;
+    display: flex; align-items: baseline; gap: 12px; }
+  .card h2 .idx { font-family: var(--mono); font-size: 0.75rem; color: var(--brass);
+    border: 1px solid var(--brass-dim); border-radius: 2px; padding: 2px 6px; letter-spacing: 0.05em; }
+
+  label { display: block; margin-bottom: 14px; font-size: 0.85rem; color: var(--ink-dim); }
+  input, textarea, select { width: 100%; box-sizing: border-box; margin-top: 5px; padding: 9px 10px;
+    border-radius: 3px; border: 1px solid var(--line); background: #0d1a2b; color: var(--ink);
+    font-family: var(--mono); font-size: 0.85rem; }
+  input:focus, textarea:focus, select:focus { outline: 2px solid var(--brass); outline-offset: 0; border-color: var(--brass); }
+  input::placeholder, textarea::placeholder { color: #4c5a70; font-family: var(--sans); }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+
+  button { background: transparent; color: var(--brass); border: 1px solid var(--brass-dim);
+    padding: 9px 16px; border-radius: 3px; font-family: var(--sans); font-size: 0.85rem;
+    font-weight: 600; cursor: pointer; transition: background-color 120ms, color 120ms; }
+  button:hover:not(:disabled) { background: var(--brass); color: #1a1408; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .status-row button { font-size: 0.8rem; padding: 6px 12px; }
+
+  hr.divider { border: none; border-top: 1px dashed var(--line); margin: 20px 0; }
+
+  .out { display: none; white-space: pre-wrap; font-family: var(--mono); font-size: 0.8rem;
+    background: #0d1a2b; border-radius: 3px; padding: 12px; margin-top: 12px; border: 1px solid var(--line); }
+  .out.ok { border-color: var(--teal); color: var(--ink); }
+  .out.err { border-color: var(--rust); color: #f0d9d0; }
+
+  .field-list { display: grid; grid-template-columns: 150px 1fr; gap: 6px 14px; font-size: 0.85rem; font-family: var(--mono); }
+  .field-list dt { color: var(--ink-dim); font-family: var(--sans); }
+  .field-list dd { margin: 0; word-break: break-all; }
+
+  @media (max-width: 560px) {
+    .grid-2 { grid-template-columns: 1fr; }
+    .addrs .label { width: auto; margin-right: 6px; }
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>ShipGuard</h1>
-  <p class="sub">Parametric shipping-delay insurance — a reference frontend built with <code>genlayer-js</code>, no build step.</p>
+  <header class="masthead">
+    <h1>ShipGuard</h1>
+    <p class="sub">Parametric shipping-delay insurance. A reference ledger for the contracts below, built with <code>genlayer-js</code> — no build step.</p>
 
-  <div class="addrs">
-    PolicyRegistry: <span id="registryAddrText"></span><br/>
-    DeliveryOracle: <span id="oracleAddrText"></span><br/>
-    SettlementVault: <span id="vaultAddrText"></span>
-  </div>
+    <div class="addrs">
+      <span class="label">PolicyRegistry</span><span id="registryAddrText"></span><br/>
+      <span class="label">DeliveryOracle</span><span id="oracleAddrText"></span><br/>
+      <span class="label">SettlementVault</span><span id="vaultAddrText"></span>
+    </div>
 
-  <div class="status-row">
-    <span class="dot" id="statusDot"></span>
-    <span id="statusText">Not connected</span>
-    <button id="connectBtn">connect wallet</button>
-    <button id="testSessionBtn">start test session</button>
-  </div>
-  <small id="testSessionNote" style="display:none">
-    Test session: a throwaway local key, only useful against a network that funds new accounts automatically (e.g. GenLayer Studio). Not for real GEN.
-  </small>
+    <div class="status-row">
+      <span class="dot" id="statusDot"></span>
+      <span id="statusText">Not connected</span>
+      <button id="connectBtn">connect wallet</button>
+      <button id="testSessionBtn">start test session</button>
+    </div>
+    <small id="testSessionNote" style="display:none">
+      Test session: a throwaway local key, only useful against a network that funds new accounts automatically (e.g. GenLayer Studio). Not for real GEN.
+    </small>
+  </header>
 
   <!-- 1: Create & fund policy -->
   <div class="card">
-    <h2>1 — Insure a shipment</h2>
+    <h2><span class="idx">01</span> Insure a shipment</h2>
     <label>Carrier <input id="carrier" placeholder="e.g. Maersk" /></label>
     <label>Tracking sources (2+ URLs, separated by |)
       <textarea id="trackingRef" rows="2" placeholder="https://tracker.example.com/A|https://tracker2.example.com/A"></textarea>
@@ -80,14 +139,14 @@
 
   <!-- 2: Underwrite / cancel -->
   <div class="card">
-    <h2>2 — Underwrite a policy</h2>
+    <h2><span class="idx">02</span> Underwrite a policy</h2>
     <label>Policy ID <input id="underwriteId" type="number" min="0" /></label>
     <label>Coverage to lock (GEN, must match the policy's coverage_amount exactly)
       <input id="underwriteCoverage" type="number" step="0.0001" min="0" />
     </label>
     <button id="underwriteBtn">underwrite</button>
     <div class="out" id="underwriteOut"></div>
-    <hr style="border-color:#334155; margin: 16px 0;" />
+    <hr class="divider" />
     <label>Policy ID to cancel (only after its funding window has expired unfunded)
       <input id="cancelId" type="number" min="0" />
     </label>
@@ -97,22 +156,22 @@
 
   <!-- 3: Resolution lifecycle -->
   <div class="card">
-    <h2>3 — Resolution</h2>
+    <h2><span class="idx">03</span> Resolution</h2>
     <label>Policy ID <input id="resolveId" type="number" min="0" /></label>
     <button id="requestResolutionBtn">request resolution</button>
     <div class="out" id="requestResolutionOut"></div>
-    <hr style="border-color:#334155; margin: 16px 0;" />
+    <hr class="divider" />
     <label>Extra evidence URL to challenge with <input id="challengeUrl" placeholder="https://..." /></label>
     <button id="challengeBtn">challenge (insured/underwriter only, once each)</button>
     <div class="out" id="challengeOut"></div>
-    <hr style="border-color:#334155; margin: 16px 0;" />
+    <hr class="divider" />
     <button id="finalizeBtn">finalize (after the 48h challenge window)</button>
     <div class="out" id="finalizeOut"></div>
   </div>
 
   <!-- 4: Settle -->
   <div class="card">
-    <h2>4 — Settle</h2>
+    <h2><span class="idx">04</span> Settle</h2>
     <label>Policy ID <input id="settleId" type="number" min="0" /></label>
     <button id="settleBtn">settle &amp; pay out</button>
     <div class="out" id="settleOut"></div>
@@ -123,7 +182,7 @@
     <h2>Look up a policy</h2>
     <label>Policy ID <input id="readId" type="number" min="0" /></label>
     <button id="readBtn">read</button>
-    <dl class="field-list" id="fieldsList" style="margin-top:12px;"></dl>
+    <dl class="field-list" id="fieldsList" style="margin-top:14px;"></dl>
     <div class="out" id="readOut"></div>
   </div>
 </div>
@@ -259,7 +318,21 @@ async function callWrite(out, address, functionName, args, value = 0n) {
 
 async function callRead(address, functionName, args) {
   const raw = await readClient.readContract({ address, functionName, args });
-  return typeof raw === 'string' ? JSON.parse(raw) : raw;
+  return typeof raw === 'string' ? safeJsonParse(raw) : raw;
+}
+
+/**
+ * JSON.parse loses precision on integers beyond Number.MAX_SAFE_INTEGER
+ * (2^53) - GEN amounts in base units (18 decimals) regularly exceed that.
+ * Wrap any bare integer literal of 16+ digits in quotes before parsing, so
+ * it survives as a string instead of a lossy float. Found via live testing:
+ * a 1000 GEN coverage_amount (10^21) round-tripped fine only because it
+ * happened to be a round number - a non-round amount would have silently
+ * lost precision.
+ */
+function safeJsonParse(text) {
+  const guarded = text.replace(/:(\s*)(-?\d{16,})(\s*[,}\]])/g, ':$1"$2"$3');
+  return JSON.parse(guarded);
 }
 
 // ---------- 1: Create & fund policy ----------
