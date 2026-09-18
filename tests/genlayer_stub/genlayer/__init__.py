@@ -99,14 +99,26 @@ class _Vm:
     UserError = UserError
 
 
+class _WriteDecorator:
+    """Stand-in for `gl.public.write`. Callable directly (plain write
+    method) and also exposes `.payable` for methods that receive
+    attached native value - both are no-ops here, matching how
+    `gl.public.view` is already handled."""
+
+    def __call__(self, fn):
+        return fn
+
+    @staticmethod
+    def payable(fn):
+        return fn
+
+
 class _PublicNamespace:
     """Stand-in for `gl.public` - decorators are no-ops that just mark
     a method as a plain callable (no ABI/consensus wiring needed for
     unit tests of internal logic)."""
 
-    @staticmethod
-    def write(fn):
-        return fn
+    write = _WriteDecorator()
 
     @staticmethod
     def view(fn):
