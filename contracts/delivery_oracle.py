@@ -1,4 +1,4 @@
-# { "Depends": "py-genlayer:latest" }
+# { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 from genlayer import *
 import json
 import datetime
@@ -106,8 +106,9 @@ class DeliveryOracle(gl.Contract):
         def get_verdicts() -> str:
             verdicts = []
             for source in sources_copy:
-                page = gl.nondet.web.render(source, mode="text")
-                prompt = f"""
+                try:
+                    page = gl.nondet.web.render(source, mode="text")
+                    prompt = f"""
 You are extracting a shipment delivery verdict from tracking page text.
 
 Declared ETA (ISO-8601 UTC): {eta_copy}
@@ -123,7 +124,21 @@ declared ETA.
 Respond using ONLY this JSON format, no other text:
 {{"delivered": true|false, "verdict": "DELAYED"|"ON_TIME"|"UNKNOWN", "detail": "short reason"}}
 """
-                result = gl.nondet.exec_prompt(prompt)
+                    result = gl.nondet.exec_prompt(prompt)
+                except Exception as exc:
+                    # A source that fails to load (dead link, 404, timeout)
+                    # should not crash the whole resolution - it just
+                    # doesn't get a vote. Found via live Studio testing:
+                    # an unreachable tracking URL previously propagated
+                    # as a raw, unrecoverable contract error instead of
+                    # degrading gracefully toward INCONCLUSIVE.
+                    result = json.dumps(
+                        {
+                            "delivered": False,
+                            "verdict": "UNKNOWN",
+                            "detail": f"source unavailable: {exc}",
+                        }
+                    )
                 verdicts.append(result)
             return json.dumps(verdicts, sort_keys=True)
 
@@ -166,6 +181,19 @@ Respond using ONLY this JSON format, no other text:
 
     @gl.public.write
     def request_resolution(self, policy_id: str) -> str:
+        """
+        Runs the nondet evidence evaluation and stores the resolution.
+
+        Deliberately does NOT call the registry here: a proven sibling
+        pattern (ProofWorksEscrow's evaluate_task / finalize_task split)
+        keeps a method's nondet block and any cross-contract call in
+        separate transactions rather than mixing them in one. The
+        registry's `mark_resolving` (which also forwards the escrowed
+        GEN to the vault) is deferred to `finalize_resolution`, which
+        never runs a nondet block itself - except on the one path below
+        where evaluation is skipped entirely (final_deadline already
+        passed), where it's safe to do both in this same call.
+        """
         if policy_id in self.resolutions:
             raise gl.vm.UserError("resolution already requested for this policy.")
 
@@ -182,6 +210,8 @@ Respond using ONLY this JSON format, no other text:
         past_deadline = now >= final_deadline_dt
 
         if past_deadline:
+            # No nondet call on this path - safe to also transition the
+            # registry in this same transaction.
             decision, summary = (
                 self.DECISION_INCONCLUSIVE,
                 "final deadline had already passed before resolution was ever requested.",
@@ -190,10 +220,6 @@ Respond using ONLY this JSON format, no other text:
             decision, summary = self._evaluate(
                 policy["tracking_ref"], policy["declared_eta"], policy["delay_threshold_days"]
             )
-
-        gl.get_contract_at(Address(self.registry_address)).emit(on="accepted").mark_resolving(
-            policy_id
-        )
 
         challenge_deadline_dt = now + datetime.timedelta(hours=self.CHALLENGE_WINDOW_HOURS)
         self._save(
@@ -210,6 +236,12 @@ Respond using ONLY this JSON format, no other text:
                 "is_final": bool(past_deadline),
             },
         )
+
+        if past_deadline:
+            gl.get_contract_at(Address(self.registry_address)).emit(
+                on="accepted"
+            ).mark_resolving(policy_id)
+
         return "ok"
 
     @gl.public.write
@@ -231,6 +263,13 @@ Respond using ONLY this JSON format, no other text:
             resolution["decision"] = self.DECISION_INCONCLUSIVE
             resolution["is_final"] = True
             self._save(policy_id, resolution)
+            # No nondet call on this path (evaluation is skipped
+            # entirely below) - safe to also transition the registry
+            # here, same reasoning as request_resolution's past_deadline
+            # branch.
+            gl.get_contract_at(Address(self.registry_address)).emit(
+                on="accepted"
+            ).mark_resolving(policy_id)
             return "ok"
 
         challenge_deadline_dt = self._parse_iso8601_utc(resolution["challenge_deadline"])
@@ -262,6 +301,13 @@ Respond using ONLY this JSON format, no other text:
 
     @gl.public.write
     def finalize_resolution(self, policy_id: str) -> str:
+        """
+        Never runs a nondet block itself, so it's always safe to follow
+        up with the registry cross-contract call here: this is where
+        `mark_resolving` (state transition + escrow forwarding) actually
+        happens for the normal path, deferred from `request_resolution`
+        for the reason documented there.
+        """
         resolution = self._load(policy_id)
         if resolution["is_final"]:
             return "ok"
@@ -273,6 +319,9 @@ Respond using ONLY this JSON format, no other text:
             resolution["decision"] = self.DECISION_INCONCLUSIVE
             resolution["is_final"] = True
             self._save(policy_id, resolution)
+            gl.get_contract_at(Address(self.registry_address)).emit(
+                on="accepted"
+            ).mark_resolving(policy_id)
             return "ok"
 
         challenge_deadline_dt = self._parse_iso8601_utc(resolution["challenge_deadline"])
@@ -281,6 +330,9 @@ Respond using ONLY this JSON format, no other text:
 
         resolution["is_final"] = True
         self._save(policy_id, resolution)
+        gl.get_contract_at(Address(self.registry_address)).emit(on="accepted").mark_resolving(
+            policy_id
+        )
         return "ok"
 
     # ----------------------------------------------------------------

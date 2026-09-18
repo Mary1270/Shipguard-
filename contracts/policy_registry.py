@@ -1,4 +1,4 @@
-# { "Depends": "py-genlayer:latest" }
+# { "Depends": "py-genlayer:1jb45aa8ynh2a9c9xn3b7qqh8sm5q93hwfp7jqmwsfhh8jpz09h6" }
 from genlayer import *
 import json
 import datetime
@@ -52,7 +52,7 @@ class PolicyRegistry(gl.Contract):
     deployed to Studio (see README.md "Known areas to verify"):
 
       - Reading attached native value via `gl.message.value` inside a
-        `@gl.public.write` method.
+        `@gl.public.write.payable` method.
       - Cross-contract calls: `.view().method(...)` for reads,
         `.emit(on="accepted").method(...)` for triggering a write on
         another contract, and a bare `.emit(value=amount, on="accepted")`
@@ -152,7 +152,7 @@ class PolicyRegistry(gl.Contract):
     # Public write methods
     # ----------------------------------------------------------------
 
-    @gl.public.write
+    @gl.public.write.payable
     def create_and_fund_policy(
         self,
         carrier: str,
@@ -249,7 +249,7 @@ class PolicyRegistry(gl.Contract):
         self.policy_count = u256(int(self.policy_count) + 1)
         return policy_id
 
-    @gl.public.write
+    @gl.public.write.payable
     def fund_as_underwriter(self, policy_id: str) -> str:
         policy = self._load(policy_id)
         if policy["state"] != self.STATE_FUNDED_INSURED:
