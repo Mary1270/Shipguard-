@@ -71,12 +71,18 @@ no GEN is ever left stuck, and no party is forced into a guessed outcome.
 
 Premium and coverage are both paid into `PolicyRegistry` (that's where
 `create_and_fund_policy` / `fund_as_underwriter` receive `gl.message.value`).
-When the oracle calls `mark_resolving` at the start of resolution,
-`PolicyRegistry` forwards the whole escrowed pot (premium + coverage) to
-`SettlementVault`, so that by the time `settle()` runs, the vault actually
-holds the GEN it needs to pay out. This was found and fixed by actually
-running the contracts end-to-end against the offline test stub during
-development - see "Test suite" below - not just by reading the code.
+`DeliveryOracle.request_resolution` runs the nondet evidence evaluation and
+stores a resolution, but - following a proven sibling pattern
+(ProofWorksEscrow's `evaluate_task` / `finalize_task` split, which never
+mixes a nondet block and a cross-contract call in one transaction) -
+`finalize_resolution` is what actually calls the registry's
+`mark_resolving`, transitioning the policy to `RESOLVING` and forwarding
+the whole escrowed pot (premium + coverage) to `SettlementVault` in that
+same, nondet-free call. By the time `settle()` runs, the vault already
+holds the GEN it needs. The escrow-forwarding step was found and fixed by
+actually running the contracts end-to-end against the offline test stub;
+the request/finalize split was found by comparing against a second,
+similarly GEN-moving sibling project - see "Test suite" below.
 
 ## Patterns carried forward, deliberately, from MatchGuard
 
@@ -99,9 +105,10 @@ best-effort, documented interpretation of GenLayer's public docs - the
 first things to double-check on an actual Studio deployment:
 
 - Reading attached native value via `gl.message.value` inside a
-  `@gl.public.write` method (no `.payable` decorator variant is assumed -
-  plain `@gl.public.write` is used everywhere, including for methods that
-  read `gl.message.value`).
+  `@gl.public.write.payable` method (confirmed against a real Studio
+  deployment: a plain `@gl.public.write` never exposes a value field to
+  send GEN with at all - `.payable` is required on any method meant to
+  receive it).
 - Cross-contract calls: `.view().method(...)` for reads,
   `.emit(on="accepted").method(...)` for triggering a write on another
   contract (the callee sees the calling *contract's* address as sender,
@@ -146,6 +153,14 @@ All three `set_*` calls are one-time and owner-only (the deployer of each
 contract). Then update the three `_ADDRESS` constants near the top of
 `index.html`'s `<script>` block.
 
+**Live on GenLayer Studio (studionet):**
+
+```
+PolicyRegistry:  0xff341cd2B736869814ae8591c0A6183230F74A34
+DeliveryOracle:  0xbA76bFD84b29260F1E0583074B92F249f4CBC561
+SettlementVault: 0x3b01D37F85032a8988cE5Cd84990fE713CE92454
+```
+
 ## Policy lifecycle
 
 ```
@@ -156,11 +171,14 @@ fund_as_underwriter()     [underwriter, value = coverage_amount]
         (or cancel_if_unfunded() -> CANCELLED + premium refunded, if nobody
          underwrites before funding_deadline)
 request_resolution()      [anyone, after evidence_lock_time]
-        -> RESOLVING; registry forwards the escrowed pot to the vault
+        -> runs the nondet evidence evaluation, stores the resolution
+           (policy stays ACTIVE - see README "How settlement actually
+           moves GEN" for why the registry call is deferred)
 challenge_resolution()    [insured/underwriter, within 48h, once each]
         -> re-evaluates with extra evidence, versioned
 finalize_resolution()     [anyone, after the challenge window or final_deadline]
-        -> resolution.is_final = true
+        -> resolution.is_final = true; registry -> RESOLVING; escrow
+           forwarded to the vault
 settle()                  [anyone]
         -> SettlementVault pays out per the table above; policy -> SETTLED
 ```
@@ -177,13 +195,64 @@ constants near the top of the `<script>` block to your deployed contracts
 before using it. No build step, no npm, nothing to install - open the file
 or serve it as a GitHub Pages site straight from the repo root.
 
+## Findings from live Studio testing
+
+This project was actually deployed and exercised on GenLayer Studio during
+development, not just written and left untested. Three real, load-bearing
+bugs were only caught this way:
+
+1. **The escrow-forwarding bug** (see "How settlement actually moves GEN"
+   above) - `SettlementVault` had nothing to pay out with, since GEN
+   landed in `PolicyRegistry` and never moved. Found by running the
+   contracts end-to-end against the offline test stub, before ever
+   touching Studio.
+2. **`@gl.public.write.payable` is required, not just `@gl.public.write`,
+   for any method meant to receive `gl.message.value`.** A plain
+   `@gl.public.write` compiles and deploys fine but Studio's UI never
+   offers a value field for it at all - confirmed live: `create_and_fund_policy`
+   and `fund_as_underwriter` are the two methods that need it.
+3. **A nondet block (web fetch + LLM) and a cross-contract call should not
+   be mixed in the same transaction.** `request_resolution` used to run
+   the evidence evaluation and immediately call the registry's
+   `mark_resolving` in one call. Comparing against a second GEN-moving
+   sibling project (ProofWorksEscrow, which splits `evaluate_task` from
+   `finalize_task` for exactly this reason) led to splitting
+   `request_resolution` (nondet only) from `finalize_resolution` (which
+   now does the registry call, since it never runs a nondet block itself).
+
+Confirmed working live, with real GEN, on GenLayer Studio: `gl.message.value`
+correctly read and validated inside a `@gl.public.write.payable` method
+(across two different calling addresses); reading another contract's state
+via `.view()`; the full nondet evidence pipeline (real web fetch + LLM
+verdict extraction + 5-validator agreement); `challenge_resolution`
+re-evaluating with an added source; a bare `.emit(value=amount,
+on="accepted")` payout to a plain EOA (`cancel_if_unfunded`); and, using a
+throwaway deployment with `CHALLENGE_WINDOW_HOURS` set to `0` purely to
+avoid a 48-hour wait, the entire remaining chain in one pass -
+`.emit(on="accepted").mark_resolving(...)` (a real cross-contract *write*,
+confirmed via the child transaction showing the Oracle's own address, not
+the caller's, as `From`), the resulting GEN transfer from registry to
+vault, and a full `settle()` call correctly reading both linked contracts,
+paying out, and calling `mark_settled`. Every mechanism this project relies
+on has now been exercised against the real network at least once.
+
 ## Known limitations / areas to verify (disclosed, not hidden)
 
-- **Native value handling is unproven.** `gl.message.value`,
-  `.emit(value=...)`, and a bare value-only `.emit()` to an EOA are all
-  implemented per GenLayer's public docs, but MatchGuard never needed any
-  of them - these are the first things to test against a real Studio
-  deployment with a small amount of GEN before trusting them with more.
+- **An unreachable tracking source now degrades gracefully.** A dead link
+  or non-2xx response used to propagate as a raw, unrecoverable contract
+  error (found live: a placeholder `/track1` path 404ing crashed the
+  whole `request_resolution` call). It's now caught per-source and counted
+  as `UNKNOWN`, so the resolution can still reach INCONCLUSIVE (or DELAYED/
+  ON_TIME, if the other source is reachable and a second real source
+  agrees) instead of reverting the transaction outright.
+- **A short delay between `finalize_resolution` and `settle()` may be
+  needed in practice.** Cross-contract calls made via `.emit(...)` create
+  separate child transactions that go through their own consensus round
+  rather than landing atomically inside the parent call; on live testing
+  this resolved well within a few seconds, but a caller (e.g. the
+  frontend) calling `settle()` immediately in the same instant as
+  `finalize_resolution` should be prepared to retry once if it sees
+  "policy is not awaiting settlement".
 - **GEN decimals.** `index.html` assumes 18 decimals (same as ETH/wei) when
   converting GEN amounts typed by the user into the integer base units the
   contracts expect. Confirm this against Studio.
